@@ -409,3 +409,38 @@ class TestEvalMetrics:
             pred = float(booster.predict(dtrain).mean())
             expected = uniform_expectile(alpha)
             np.testing.assert_allclose(pred, expected, rtol=atol, atol=atol)
+
+    def test_cox_nloglik_weights(self) -> None:
+        rng = np.random.RandomState(1994)
+        n_samples = 32
+        times = rng.permutation(n_samples) + 1.0
+        event = rng.rand(n_samples) < 0.7
+        event[:2] = True
+        y = np.where(event, times, -times)
+        weight = rng.randint(1, 4, size=n_samples)
+        margin = rng.normal(scale=0.5, size=n_samples)
+
+        def evaluate(
+            label: np.ndarray, base_margin: np.ndarray, sample_weight: np.ndarray
+        ) -> float:
+            # Evaluate the margin as the prediction without training any tree.
+            Xy = xgb.DMatrix(
+                np.zeros((label.size, 1)),
+                label,
+                weight=sample_weight,
+                base_margin=base_margin,
+            )
+            booster = xgb.train(
+                {"objective": "survival:cox", "eval_metric": "cox-nloglik"},
+                Xy,
+                num_boost_round=0,
+            )
+            return float(booster.eval(Xy).split(":")[-1])
+
+        # An integer weight is the same as repeating the sample.
+        repeated = np.repeat(np.arange(n_samples), weight)
+        np.testing.assert_allclose(
+            evaluate(y[repeated], margin[repeated], np.ones(repeated.size)),
+            evaluate(y, margin, weight),
+            rtol=1e-5,
+        )

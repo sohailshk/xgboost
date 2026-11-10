@@ -178,3 +178,57 @@ def test_aft_survival_demo_data():
     assert nloglik_rec["normal"][-1] < 4.9
     assert nloglik_rec["logistic"][-1] > 4.9
     assert nloglik_rec["extreme"][-1] > 4.9
+
+
+def test_cox_sample_weights() -> None:
+    """The weights of the Cox objective are the case weights of the partial likelihood,
+    both for the events and for the samples in the risk sets.
+
+    """
+    rng = np.random.RandomState(1994)
+    n_samples = 16
+    times = rng.permutation(n_samples) + 1.0
+    event = rng.rand(n_samples) < 0.7
+    event[:2] = True
+    y = np.where(event, times, -times)
+    weight = rng.randint(1, 4, size=n_samples).astype(np.float64)
+    margin = rng.normal(scale=0.5, size=n_samples)
+    # A single binary feature, so that the tree has one split and two leaves.
+    X = (np.arange(n_samples) % 2).reshape(-1, 1).astype(np.float64)
+
+    def nll(m: np.ndarray) -> float:
+        # Negative weighted partial log-likelihood, Breslow's method for ties.
+        risk = weight * np.exp(m)
+        out = 0.0
+        for i in np.flatnonzero(event):
+            out -= weight[i] * (m[i] - np.log(np.sum(risk[times >= times[i]])))
+        return out
+
+    # Numerical gradient and diagonal of the Hessian.
+    eps = 1e-4
+    grad = np.empty(n_samples)
+    hess = np.empty(n_samples)
+    for i in range(n_samples):
+        step = np.zeros(n_samples)
+        step[i] = eps
+        grad[i] = (nll(margin + step) - nll(margin - step)) / (2 * eps)
+        hess[i] = (nll(margin + step) - 2 * nll(margin) + nll(margin - step)) / eps**2
+
+    Xy = xgb.DMatrix(X, y, weight=weight, base_margin=margin)
+    params = {
+        "objective": "survival:cox",
+        "tree_method": "exact",
+        "max_depth": 1,
+        "learning_rate": 1.0,
+        "reg_lambda": 0.0,
+        "min_child_weight": 0.0,
+    }
+    booster = xgb.train(params, Xy, num_boost_round=1)
+    leaf = booster.predict(Xy, output_margin=True) - margin
+
+    # Newton step of each leaf.
+    expected = np.empty(n_samples)
+    for value in (0.0, 1.0):
+        mask = X[:, 0] == value
+        expected[mask] = -grad[mask].sum() / hess[mask].sum()
+    np.testing.assert_allclose(leaf, expected, rtol=1e-3)

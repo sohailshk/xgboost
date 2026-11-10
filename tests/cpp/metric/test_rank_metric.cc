@@ -40,7 +40,10 @@ TEST(Metric, CoxKernel) {
     // Tied event/censor times share the risk set; censored rows are not events.
     auto expected = (std::log(5.0) + std::log(7.0 / 4.0)) / 3.0;
     EXPECT_NEAR(GetMetricEval(metric.get(), {2, 1, 4, 3}, {1, -1, 2, 3}), expected, 1e-6);
-    EXPECT_NEAR(GetMetricEval(metric.get(), {2, 1, 4, 3}, {1, -1, 2, 3}, {1, 2, 3, 4}), expected,
+    // Weights are case weights: they enter the risk sets and the event terms, and the sum is
+    // normalized by the sum of the event weights.
+    auto weighted = (std::log(14.0) + 3.0 * std::log(6.0) + 4.0 * std::log(4.0)) / 8.0;
+    EXPECT_NEAR(GetMetricEval(metric.get(), {2, 1, 4, 3}, {1, -1, 2, 3}, {1, 2, 3, 4}), weighted,
                 1e-6);
   }
 }

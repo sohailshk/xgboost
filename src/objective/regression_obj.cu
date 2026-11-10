@@ -96,17 +96,18 @@ class CoxRegression : public ObjFunction {
           << "Number of weights should be equal to number of data points.";
     }
 
-    // pre-compute a sum
+    // pre-compute a sum, each sample enters the risk set with its weight
     double exp_p_sum = 0;  // we use double because we might need the precision with large datasets
     for (omp_ulong i = 0; i < ndata; ++i) {
-      exp_p_sum += std::exp(preds_h[label_order[i]]);
+      exp_p_sum +=
+          static_cast<double>(info.GetWeight(label_order[i])) * std::exp(preds_h[label_order[i]]);
     }
 
     // start calculating grad and hess
     const auto& labels = info.labels.HostView();
     double r_k = 0;
     double s_k = 0;
-    double last_exp_p = 0.0;
+    double last_w_exp_p = 0.0;
     double last_abs_y = 0.0;
     double accumulated_sum = 0;
     for (omp_ulong i = 0; i < ndata; ++i) {  // NOLINT(*)
@@ -119,7 +120,7 @@ class CoxRegression : public ObjFunction {
 
       // only update the denominator after we move forward in time (labels are sorted)
       // this is Breslow's method for ties
-      accumulated_sum += last_exp_p;
+      accumulated_sum += last_w_exp_p;
       if (last_abs_y < abs_y) {
         exp_p_sum -= accumulated_sum;
         accumulated_sum = 0;
@@ -128,17 +129,18 @@ class CoxRegression : public ObjFunction {
                                    << "MetaInfo::LabelArgsort failed!";
       }
 
-      if (y > 0) {
-        r_k += 1.0 / exp_p_sum;
-        s_k += 1.0 / (exp_p_sum * exp_p_sum);
+      if (y > 0 && w > 0.0) {
+        r_k += w / exp_p_sum;
+        s_k += w / (exp_p_sum * exp_p_sum);
       }
 
-      const double grad = exp_p * r_k - static_cast<bst_float>(y > 0);
-      const double hess = exp_p * r_k - exp_p * exp_p * s_k;
-      gpair(ind) = GradientPair(grad * w, hess * w);
+      // Gradient and diagonal Hessian of the weighted negative partial log-likelihood.
+      const double grad = w * (exp_p * r_k - static_cast<bst_float>(y > 0));
+      const double hess = w * exp_p * r_k - w * w * exp_p * exp_p * s_k;
+      gpair(ind) = GradientPair(grad, hess);
 
       last_abs_y = abs_y;
-      last_exp_p = exp_p;
+      last_w_exp_p = w * exp_p;
     }
   }
   std::vector<bst_ulong> PredTransform(HostDeviceVector<bst_float>* io_preds,

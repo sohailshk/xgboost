@@ -92,39 +92,41 @@ double EvalAMSCpu(Context const* ctx, HostDeviceVector<float> const& preds, Meta
 
 double EvalCoxCpu(Context const* ctx, HostDeviceVector<float> const& preds, MetaInfo const& info) {
   using namespace std;  // NOLINT(*)
+  CheckRowWeights(info);
 
   const auto ndata = static_cast<bst_omp_uint>(info.labels.Size());
   const auto& label_order = info.LabelAbsSort(ctx);
 
-  // pre-compute a sum for the denominator
+  // pre-compute a sum for the denominator, each sample enters the risk set with its weight
   double exp_p_sum = 0;  // we use double because we might need the precision with large datasets
 
   const auto& h_preds = preds.ConstHostVector();
   for (std::size_t i = 0; i < ndata; ++i) {
-    exp_p_sum += h_preds[i];
+    exp_p_sum += static_cast<double>(info.GetWeight(i)) * h_preds[i];
   }
 
   double out = 0;
   double accumulated_sum = 0;
-  bst_omp_uint num_events = 0;
+  double num_events = 0;  // the sum of the weights of the events
   const auto& labels = info.labels.HostView();
   for (bst_omp_uint i = 0; i < ndata; ++i) {
     const size_t ind = label_order[i];
     const auto label = labels(ind);
-    if (label > 0) {
-      out -= log(h_preds[ind]) - log(exp_p_sum);
-      ++num_events;
+    const double w = info.GetWeight(ind);
+    if (label > 0 && w > 0.0) {
+      out -= w * (log(h_preds[ind]) - log(exp_p_sum));
+      num_events += w;
     }
 
     // only update the denominator after we move forward in time (labels are sorted)
-    accumulated_sum += h_preds[ind];
+    accumulated_sum += w * h_preds[ind];
     if (i == ndata - 1 || std::abs(label) < std::abs(labels(label_order[i + 1]))) {
       exp_p_sum -= accumulated_sum;
       accumulated_sum = 0;
     }
   }
 
-  return out / num_events;  // normalize by the number of events
+  return out / num_events;  // normalize by the (weighted) number of events
 }
 
 auto const kRegisterAMSCpu =

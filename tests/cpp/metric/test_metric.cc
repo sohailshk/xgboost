@@ -15,8 +15,8 @@
 namespace xgboost {
 namespace {
 bool AcceptsRowWeights(std::string const& name) {
-  // Learning-to-rank metrics consume one weight per query. The Cox metric does not consume weights.
-  return name != "pre" && name != "map" && name != "ndcg" && name != "cox-nloglik";
+  // Learning-to-rank metrics consume one weight per query.
+  return name != "pre" && name != "map" && name != "ndcg";
 }
 
 bool AcceptsQueryWeights(std::string const& name) { return name == "auc" || name == "aucpr"; }
